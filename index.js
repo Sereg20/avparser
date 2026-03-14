@@ -24,18 +24,19 @@ async function fetchCarsData() {
 
     try {
         await page.goto(TARGET_URL, { waitUntil: 'domcontentloaded' });
+        await new Promise(res => setTimeout(res, 10000))
         
         // Ждем появления списка объявлений (ЗАМЕНИ СЕЛЕКТОР НА РЕАЛЬНЫЙ С AV.BY)
-        await page.waitForSelector('.listing-item', { timeout: 10000 });
-
+        const elem = await page.waitForSelector('.listing-item', { timeout: 10000 });
         // Собираем данные внутри контекста браузера
+        await new Promise(res => setTimeout(res, 10000))
         results = await page.$$eval('.listing-item', (listings) => {
             return listings.map(item => {
                 // ВНИМАНИЕ: Замени эти селекторы на те, что используются на сайте
-                const titleEl = item.querySelector('.car-title');
-                const priceEl = item.querySelector('.car-price');
-                const yearEl = item.querySelector('.car-year');
-                const mileageEl = item.querySelector('.car-mileage');
+                const titleEl = item.querySelector('.link-text');
+                const priceEl = item.querySelector('.listing-item__price-primary');
+                const yearEl = item.querySelector('.listing-item__params');
+                const mileageEl = item.querySelector('.listing-item__params div:nth-child(3) span');
                 const linkEl = item.querySelector('a');
 
                 if (!titleEl || !priceEl || !yearEl || !mileageEl || !linkEl) return null;
