@@ -2,6 +2,7 @@
   "name": "av",
   "version": "1.0.0",
   "main": "index.js",
+  "type": "module",
   "scripts": {
     "start": "node index.js",
     "test": "echo \"Error: no test specified\" && exit 1"
@@ -12,7 +13,6 @@
   "description": "",
   "dependencies": {
     "dotenv": "^17.3.1",
-    "playwright": "^1.58.2",
     "telegraf": "^4.16.3"
   }
 }

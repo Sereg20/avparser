@@ -1,175 +1,188 @@
 import { Telegraf } from 'telegraf';
-import { chromium } from 'playwright';
 import 'dotenv/config';
+import crypto from 'crypto'; // Добавляем встроенный генератор случайных ID
 
 // --- НАСТРОЙКИ ---
-const TARGET_URL = process.env.TARGET_URL;
 const DISCOUNT_THRESHOLD = process.env.DISCOUNT_THRESHOLD;
 
 const bot = new Telegraf(process.env.BOT_TOKEN);
 
-// --- ЛОГИКА ПАРСИНГА ---
+// Вспомогательная функция для извлечения данных из массива ad_parameters
+function getAdParam(parameters, paramName, key = 'vl') {
+  const param = parameters.find(p => p.p === paramName);
+  return param ? param[key] : null;
+}
+
 async function fetchCarsData() {
-    console.log('Запуск Playwright...');
-    
-    // Включаем видимый режим и добавляем паузу в 500мс между действиями
-    const browser = await chromium.launch({ 
-        headless: false, 
-        slowMo: 500 
-    });
-    
-    const context = await browser.newContext();
-    const page = await context.newPage();
-    let results = [];
+  console.log('🌐 Запрашиваем свежие объявления с API Куфара...');
+  let results = [];
 
-    try {
-        await page.goto(TARGET_URL, { waitUntil: 'domcontentloaded' });
-        
-        // Ждем появления списка объявлений (ЗАМЕНИ СЕЛЕКТОР НА РЕАЛЬНЫЙ С AV.BY)
-        await page.waitForSelector('.listing-item', { timeout: 10000 });
+  // Я добавил в URL параметры size=30 (максимум на страницу) и lang=ru из твоего curl
+  const url = 'https://api.kufar.by/search-api/v2/search/rendered-paginated?cat=2010&cur=BYR&sort=lst.d&size=30&lang=ru';
 
-        // Собираем данные внутри контекста браузера
-        results = await page.$$eval('.listing-item', (listings) => {
-            return listings.map(item => {
-                // ВНИМАНИЕ: Замени эти селекторы на те, что используются на сайте
-                const titleEl = item.querySelector('.car-title');
-                const priceEl = item.querySelector('.car-price');
-                const yearEl = item.querySelector('.car-year');
-                const mileageEl = item.querySelector('.car-mileage');
-                const linkEl = item.querySelector('a');
+  // Формируем заголовки, маскируясь под реальный браузер
+  const headers = {
+    'accept': '*/*',
+    'accept-language': 'ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7',
+    'cache-control': 'no-cache',
+    'content-type': 'application/json',
+    'origin': 'https://auto.kufar.by',
+    'pragma': 'no-cache',
+    'referer': 'https://auto.kufar.by/',
+    'sec-ch-ua': '"Not(A:Brand";v="8", "Chromium";v="144", "Google Chrome";v="144"',
+    'sec-ch-ua-mobile': '?0',
+    'sec-ch-ua-platform': '"Windows"',
+    'sec-fetch-dest': 'empty',
+    'sec-fetch-mode': 'cors',
+    'sec-fetch-site': 'same-site',
+    'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36',
+    // Генерируем уникальный ID для каждого запроса, чтобы не "светить" одним и тем же
+    'x-searchid': crypto.randomUUID(),
+    // Важнейший внутренний заголовок Куфара для правильного роутинга
+    'x-segmentation': 'routing=web_auto;platform=web;application=ad_view;taxonomy-version=2'
+  };
 
-                if (!titleEl || !priceEl || !yearEl || !mileageEl || !linkEl) return null;
+  try {
+    // Передаем заголовки вторым аргументом в функцию fetch
+    const response = await fetch(url, { method: 'GET', headers: headers });
 
-                // Очистка данных (убираем пробелы, 'км', '$' и переводим в числа)
-                const priceStr = priceEl.innerText.replace(/\D/g, ''); 
-                const mileageStr = mileageEl.innerText.replace(/\D/g, '');
-
-                return {
-                    title: titleEl.innerText.trim(),
-                    price: parseInt(priceStr, 10),
-                    year: parseInt(yearEl.innerText, 10),
-                    mileage: parseInt(mileageStr, 10),
-                    url: linkEl.href
-                };
-            }).filter(item => item !== null); // Убираем пустые записи
-        });
-
-    } catch (error) {
-        console.error('Ошибка при парсинге:', error);
-    } finally {
-        await browser.close();
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`Ошибка API: ${response.status} - ${errorText}`);
     }
 
-    return results;
+    const data = await response.json();
+
+    if (!data.ads || data.ads.length === 0) return results;
+
+    for (const ad of data.ads) {
+      // Базовые параметры
+      const brand = getAdParam(ad.ad_parameters, 'cars_brand_v2') || 'Неизвестная марка';
+      const model = getAdParam(ad.ad_parameters, 'cars_model_v2') || '';
+      const yearStr = getAdParam(ad.ad_parameters, 'regdate', 'v');
+      const mileageStr = getAdParam(ad.ad_parameters, 'mileage', 'v');
+      const priceUsd = ad.price_usd ? parseInt(ad.price_usd, 10) / 100 : 0;
+
+      // 🔥 НОВЫЕ ПАРАМЕТРЫ 🔥
+      const engine = getAdParam(ad.ad_parameters, 'cars_engine') || 'Не указан';
+      const capacity = getAdParam(ad.ad_parameters, 'cars_capacity') || '';
+      const gearbox = getAdParam(ad.ad_parameters, 'cars_gearbox') || 'Не указана';
+
+      if (brand && yearStr && priceUsd > 0) {
+        results.push({
+          title: `${brand} ${model}`.trim(),
+          price: priceUsd,
+          year: parseInt(yearStr, 10),
+          mileage: mileageStr ? parseInt(mileageStr, 10) : 0,
+          // Добавляем новые поля в итоговый объект
+          engine: engine,
+          capacity: capacity,
+          gearbox: gearbox,
+          url: ad.ad_link
+        });
+      }
+    }
+  } catch (error) {
+    console.error('❌ Ошибка при запросе:', error);
+  }
+
+  return results;
+}
+
+async function runScheduledJob() {
+  console.log(`\n⏳ [${new Date().toLocaleTimeString()}] Запуск проверки по расписанию...`);
+
+  if (CHAT_ID === 'ТВОЙ_CHAT_ID') {
+    console.log('⚠️ ВНИМАНИЕ: CHAT_ID не установлен. Отправка в Телеграм невозможна.');
+    return;
+  }
+
+  const carsData = await fetchCarsData();
+  console.log(`✅ Собрано объявлений с первой страницы: ${carsData.length}`);
+
+  if (carsData.length === 0) return;
+
+  const bestDeals = analyzeMarket(carsData);
+
+  if (bestDeals.length > 0) {
+    let message = `🔥 **Ежечасный скаут: Найдены выгодные авто!**\n\n`;
+
+    bestDeals.forEach(deal => {
+      message += `🚗 **${deal.title}** (${deal.year} г., ${deal.mileage} км)\n`;
+      message += `💰 Цена: ${deal.price}$ (Рынок: ~${deal.marketPrice}$)\n`;
+      message += `📉 Выгода: ${deal.discountPct}%\n`;
+      message += `🔗 [Смотреть объявление](${deal.url})\n\n`;
+    });
+
+    // Отправляем сообщение конкретному пользователю
+    try {
+      await bot.telegram.sendMessage(CHAT_ID, message, { parse_mode: 'Markdown' });
+      console.log('📨 Уведомление успешно отправлено в Телеграм!');
+    } catch (error) {
+      console.error('❌ Ошибка отправки в Телеграм:', error.description);
+    }
+  } else {
+    console.log('🤷‍♂️ За этот час выгодных предложений не появилось.');
+  }
 }
 
 // --- ЛОГИКА АНАЛИЗА ---
 function analyzeMarket(cars) {
-    const marketGroups = {};
 
-    // 1. Группируем машины по "Название + Год"
-    cars.forEach(car => {
-        const key = `${car.title}_${car.year}`;
-        if (!marketGroups[key]) marketGroups[key] = [];
-        marketGroups[key].push(car.price);
-    });
-
-    const medianPrices = {};
-
-    // 2. Считаем медианную цену (или среднюю) для каждой группы
-    for (const [key, prices] of Object.entries(marketGroups)) {
-        if (prices.length >= 3) { // Считаем рынок, если есть хотя бы 3 похожих авто
-            prices.sort((a, b) => a - b);
-            const mid = Math.floor(prices.length / 2);
-            medianPrices[key] = prices.length % 2 !== 0 ? prices[mid] : (prices[mid - 1] + prices[mid]) / 2;
-        }
-    }
-
-    const profitableDeals = [];
-
-    // 3. Ищем машины, которые дешевле медианы
-    cars.forEach(car => {
-        const key = `${car.title}_${car.year}`;
-        if (medianPrices[key]) {
-            const marketPrice = medianPrices[key];
-            const discount = ((marketPrice - car.price) / marketPrice) * 100;
-
-            if (discount >= DISCOUNT_THRESHOLD) {
-                profitableDeals.push({
-                    ...car,
-                    marketPrice: marketPrice,
-                    discountPct: Math.round(discount)
-                });
-            }
-        }
-    });
-
-    return profitableDeals;
 }
 
-// --- ОБРАБОТЧИК ТЕЛЕГРАМ БОТА ---
-bot.command('search', async (ctx) => {
-    await ctx.reply('🔍 Запускаю сбор данных с сайта и анализ рынка. Подождите немного...');
-
-    const carsData = await fetchCarsData();
-
-    if (carsData.length === 0) {
-        return ctx.reply('❌ Не удалось собрать данные. Возможно, изменилась верстка сайта или сработала защита.');
-    }
-
-    await ctx.reply(`📊 Собрано объявлений: ${carsData.length}. Идет анализ цен...`);
-
-    const bestDeals = analyzeMarket(carsData);
-
-    if (bestDeals.length > 0) {
-        let message = `🔥 **Найдены машины ниже рынка (скидка от ${DISCOUNT_THRESHOLD}%):**\n\n`;
-        
-        bestDeals.forEach(deal => {
-            message += `🚗 **${deal.title}** (${deal.year} г., ${deal.mileage} км)\n`;
-            message += `💰 Цена: ${deal.price}$ (Рынок: ~${deal.marketPrice}$)\n`;
-            message += `📉 Выгода: ${deal.discountPct}%\n`;
-            message += `🔗 [Смотреть объявление](${deal.url})\n\n`;
-        });
-
-        await ctx.replyWithMarkdown(message);
-    } else {
-        await ctx.reply('😔 На данный момент откровенно заниженных цен по заданным параметрам нет.');
-    }
+// --- КОМАНДЫ БОТА ---
+// Команда для получения своего CHAT_ID
+bot.start((ctx) => {
+  ctx.reply(`Привет! Твой CHAT_ID: ${ctx.chat.id}\n\nСкопируй эти цифры (включая минус, если он есть) и вставь их в переменную CHAT_ID в коде index.js.`);
 });
 
-// Запуск бота
-bot.launch().then(() => console.log('Бот успешно запущен!'));
+bot.command('status', (ctx) => {
+  ctx.reply('🟢 Сервис мониторинга работает в фоновом режиме.');
+});
 
-// Остановка при завершении процесса
+// --- ЗАПУСК ---
+bot.launch().then(() => {
+  console.log('🤖 Телеграм-бот запущен!');
+
+  // Запускаем парсер первый раз сразу при старте скрипта
+  runScheduledJob();
+
+  // Настраиваем интервал запуска: 1 час = 60 минут * 60 секунд * 1000 миллисекунд
+  const ONE_HOUR = 60 * 60 * 1000;
+  setInterval(runScheduledJob, ONE_HOUR);
+  console.log('⏰ Таймер установлен на 1 час.');
+});
+
 process.once('SIGINT', () => bot.stop('SIGINT'));
 process.once('SIGTERM', () => bot.stop('SIGTERM'));
 
 // --- БЛОК ЛОКАЛЬНОЙ ОТЛАДКИ ---
-async function runLocalDebug() {
-    console.log('🛠 --- СТАРТ ЛОКАЛЬНОЙ ОТЛАДКИ --- 🛠');
-    
-    // 1. Запускаем только сбор данных
-    const cars = await fetchCarsData();
-    
-    console.log(`\n✅ Собрано объявлений: ${cars.length}`);
-    
-    // Выводим первые 3 машины в консоль, чтобы проверить, правильно ли спарсились данные
-    if (cars.length > 0) {
-        console.log('👀 Пример собранных данных (первые 3):');
-        console.log(cars.slice(0, 3)); 
-        
-        // 2. Тестируем математику анализа
-        console.log('\n🧠 --- ЗАПУСК АНАЛИЗА --- 🧠');
-        const deals = analyzeMarket(cars);
-        
-        console.log(`🔥 Найдено выгодных предложений: ${deals.length}`);
-        if (deals.length > 0) {
-            console.log(deals);
-        }
-    } else {
-        console.log('❌ Данные не собраны. Проверь селекторы!');
-    }
-}
 
-// Раскомментируй строку ниже, чтобы запустить скрипт локально в консоли
-runLocalDebug();
+// async function runLocalDebug() {
+//   let deals = [];
+//   console.log('🛠 --- СТАРТ ЛОКАЛЬНОЙ ОТЛАДКИ --- 🛠');
+
+//   // 1. Запускаем только сбор данных
+//   const cars = await fetchCarsData();
+
+//   console.log(`\n✅ Собрано объявлений: ${cars.length}`);
+
+//   // Выводим первые 3 машины в консоль, чтобы проверить, правильно ли спарсились данные
+//   if (cars.length > 0) {
+//     console.log('👀 Пример собранных данных (первые 3):');
+//     console.log(cars.slice(0, 3));
+
+//     // 2. Тестируем математику анализа
+//     console.log('\n🧠 --- ЗАПУСК АНАЛИЗА --- 🧠');
+//     // deals = analyzeMarket(cars);
+
+//     console.log(`🔥 Найдено выгодных предложений: ${deals.length}`);
+//     if (deals.length > 0) {
+//       console.log(deals);
+//     }
+//   } else {
+//     console.log('❌ Данные не собраны. Проверь селекторы!');
+//   }
+// }
+// runLocalDebug();
