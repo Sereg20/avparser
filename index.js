@@ -74,7 +74,7 @@ async function fetchCarsData() {
 
 function analyzeMarket(cars) {
   
-  return [];
+  return cars[0];
 }
 
 // Выносим логику отправки в отдельную функцию, чтобы вызывать ее и по крону, и вручную
