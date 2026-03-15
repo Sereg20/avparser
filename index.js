@@ -1,6 +1,7 @@
 import { Telegraf } from 'telegraf';
 import crypto from 'crypto';
 import cron from 'node-cron';
+import 'dotenv/config';
 
 // Берем данные из переменных окружения сервера
 const BOT_TOKEN = process.env.BOT_TOKEN;
@@ -74,7 +75,7 @@ async function fetchCarsData() {
 
 function analyzeMarket(cars) {
   
-  return cars[0];
+  return cars.slice(0,1);
 }
 
 // Выносим логику отправки в отдельную функцию, чтобы вызывать ее и по крону, и вручную
@@ -155,7 +156,7 @@ process.once('SIGTERM', () => bot.stop('SIGTERM'));
 
 //     // 2. Тестируем математику анализа
 //     console.log('\n🧠 --- ЗАПУСК АНАЛИЗА --- 🧠');
-//     // deals = analyzeMarket(cars);
+//     deals = analyzeMarket(cars);
 
 //     console.log(`🔥 Найдено выгодных предложений: ${deals.length}`);
 //     if (deals.length > 0) {
