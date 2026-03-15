@@ -1,26 +1,24 @@
 import { Telegraf } from 'telegraf';
-import 'dotenv/config';
-import crypto from 'crypto'; // Добавляем встроенный генератор случайных ID
+import crypto from 'crypto';
+import cron from 'node-cron';
 
-// --- НАСТРОЙКИ ---
-const DISCOUNT_THRESHOLD = process.env.DISCOUNT_THRESHOLD;
+// Берем данные из переменных окружения сервера
+const BOT_TOKEN = process.env.BOT_TOKEN;
+const CHAT_ID = process.env.CHAT_ID;
+const DISCOUNT_THRESHOLD = 15;
 
-const bot = new Telegraf(process.env.BOT_TOKEN);
+const bot = new Telegraf(BOT_TOKEN);
 
-// Вспомогательная функция для извлечения данных из массива ad_parameters
 function getAdParam(parameters, paramName, key = 'vl') {
   const param = parameters.find(p => p.p === paramName);
   return param ? param[key] : null;
 }
 
 async function fetchCarsData() {
-  console.log('🌐 Запрашиваем свежие объявления с API Куфара...');
+  console.log(`[${new Date().toLocaleTimeString('ru-RU')}] 🌐 Запрашиваем API Куфара...`);
   let results = [];
 
-  // Я добавил в URL параметры size=30 (максимум на страницу) и lang=ru из твоего curl
   const url = 'https://api.kufar.by/search-api/v2/search/rendered-paginated?cat=2010&cur=BYR&sort=lst.d&size=30&lang=ru';
-
-  // Формируем заголовки, маскируясь под реальный браузер
   const headers = {
     'accept': '*/*',
     'accept-language': 'ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7',
@@ -36,37 +34,26 @@ async function fetchCarsData() {
     'sec-fetch-mode': 'cors',
     'sec-fetch-site': 'same-site',
     'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36',
-    // Генерируем уникальный ID для каждого запроса, чтобы не "светить" одним и тем же
     'x-searchid': crypto.randomUUID(),
-    // Важнейший внутренний заголовок Куфара для правильного роутинга
     'x-segmentation': 'routing=web_auto;platform=web;application=ad_view;taxonomy-version=2'
   };
 
   try {
-    // Передаем заголовки вторым аргументом в функцию fetch
     const response = await fetch(url, { method: 'GET', headers: headers });
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(`Ошибка API: ${response.status} - ${errorText}`);
-    }
+    if (!response.ok) throw new Error(`Ошибка API: ${response.status}`);
 
     const data = await response.json();
-
     if (!data.ads || data.ads.length === 0) return results;
 
     for (const ad of data.ads) {
-      // Базовые параметры
       const brand = getAdParam(ad.ad_parameters, 'cars_brand_v2') || 'Неизвестная марка';
       const model = getAdParam(ad.ad_parameters, 'cars_model_v2') || '';
       const yearStr = getAdParam(ad.ad_parameters, 'regdate', 'v');
       const mileageStr = getAdParam(ad.ad_parameters, 'mileage', 'v');
-      const priceUsd = ad.price_usd ? parseInt(ad.price_usd, 10) / 100 : 0;
-
-      // 🔥 НОВЫЕ ПАРАМЕТРЫ 🔥
       const engine = getAdParam(ad.ad_parameters, 'cars_engine') || 'Не указан';
       const capacity = getAdParam(ad.ad_parameters, 'cars_capacity') || '';
       const gearbox = getAdParam(ad.ad_parameters, 'cars_gearbox') || 'Не указана';
+      const priceUsd = ad.price_usd ? parseInt(ad.price_usd, 10) / 100 : 0;
 
       if (brand && yearStr && priceUsd > 0) {
         results.push({
@@ -74,10 +61,7 @@ async function fetchCarsData() {
           price: priceUsd,
           year: parseInt(yearStr, 10),
           mileage: mileageStr ? parseInt(mileageStr, 10) : 0,
-          // Добавляем новые поля в итоговый объект
-          engine: engine,
-          capacity: capacity,
-          gearbox: gearbox,
+          engine, capacity, gearbox,
           url: ad.ad_link
         });
       }
@@ -85,73 +69,69 @@ async function fetchCarsData() {
   } catch (error) {
     console.error('❌ Ошибка при запросе:', error);
   }
-
   return results;
 }
 
-async function runScheduledJob() {
-  console.log(`\n⏳ [${new Date().toLocaleTimeString()}] Запуск проверки по расписанию...`);
+function analyzeMarket(cars) {
+  
+  return [];
+}
 
-  if (CHAT_ID === 'ТВОЙ_CHAT_ID') {
-    console.log('⚠️ ВНИМАНИЕ: CHAT_ID не установлен. Отправка в Телеграм невозможна.');
+// Выносим логику отправки в отдельную функцию, чтобы вызывать ее и по крону, и вручную
+async function processAndSendDeals(ctx = null) {
+  const carsData = await fetchCarsData();
+
+  if (carsData.length === 0) {
+    if (ctx) ctx.reply('❌ Не удалось получить данные с Куфара.');
     return;
   }
-
-  const carsData = await fetchCarsData();
-  console.log(`✅ Собрано объявлений с первой страницы: ${carsData.length}`);
-
-  if (carsData.length === 0) return;
 
   const bestDeals = analyzeMarket(carsData);
 
   if (bestDeals.length > 0) {
-    let message = `🔥 **Ежечасный скаут: Найдены выгодные авто!**\n\n`;
-
+    let message = `🔥 **Найдены выгодные авто (Скидка от ${DISCOUNT_THRESHOLD}%):**\n\n`;
     bestDeals.forEach(deal => {
       message += `🚗 **${deal.title}** (${deal.year} г., ${deal.mileage} км)\n`;
+      message += `⚙️ Техника: ${deal.capacity} ${deal.engine}, ${deal.gearbox}\n`;
       message += `💰 Цена: ${deal.price}$ (Рынок: ~${deal.marketPrice}$)\n`;
       message += `📉 Выгода: ${deal.discountPct}%\n`;
       message += `🔗 [Смотреть объявление](${deal.url})\n\n`;
     });
 
-    // Отправляем сообщение конкретному пользователю
     try {
-      await bot.telegram.sendMessage(CHAT_ID, message, { parse_mode: 'Markdown' });
-      console.log('📨 Уведомление успешно отправлено в Телеграм!');
+      if (ctx) {
+        await ctx.replyWithMarkdown(message); // Ответ на ручную команду
+      } else if (CHAT_ID) {
+        await bot.telegram.sendMessage(CHAT_ID, message, { parse_mode: 'Markdown' }); // Автоматическая рассылка
+      }
     } catch (error) {
-      console.error('❌ Ошибка отправки в Телеграм:', error.description);
+      console.error('Ошибка Телеграм:', error.description);
     }
   } else {
-    console.log('🤷‍♂️ За этот час выгодных предложений не появилось.');
+    if (ctx) ctx.reply('🤷‍♂️ Сейчас нет выгодных предложений.');
+    console.log('Выгодных предложений не найдено.');
   }
 }
 
-// --- ЛОГИКА АНАЛИЗА ---
-function analyzeMarket(cars) {
-
-}
-
 // --- КОМАНДЫ БОТА ---
-// Команда для получения своего CHAT_ID
 bot.start((ctx) => {
-  ctx.reply(`Привет! Твой CHAT_ID: ${ctx.chat.id}\n\nСкопируй эти цифры (включая минус, если он есть) и вставь их в переменную CHAT_ID в коде index.js.`);
+  ctx.reply(`Привет! Твой CHAT_ID: \`${ctx.chat.id}\`\nДобавь его в переменные окружения на сервере.`);
 });
 
-bot.command('status', (ctx) => {
-  ctx.reply('🟢 Сервис мониторинга работает в фоновом режиме.');
+bot.command('check', async (ctx) => {
+  await ctx.reply('⏳ Запускаю внеочередную проверку рынка...');
+  await processAndSendDeals(ctx);
 });
 
-// --- ЗАПУСК ---
+// --- ЗАПУСК БОТА И КРОНА ---
 bot.launch().then(() => {
-  console.log('🤖 Телеграм-бот запущен!');
+  console.log('🤖 Бот запущен! Ожидаю расписания...');
 
-  // Запускаем парсер первый раз сразу при старте скрипта
-  runScheduledJob();
-
-  // Настраиваем интервал запуска: 1 час = 60 минут * 60 секунд * 1000 миллисекунд
-  const ONE_HOUR = 60 * 60 * 1000;
-  setInterval(runScheduledJob, ONE_HOUR);
-  console.log('⏰ Таймер установлен на 1 час.');
+  // Запуск крона (0 * * * * означает "в 00 минут каждого часа", например 14:00, 15:00)
+  cron.schedule('0 * * * *', () => {
+    console.log('⏰ Сработал таймер расписания!');
+    processAndSendDeals();
+  });
 });
 
 process.once('SIGINT', () => bot.stop('SIGINT'));
