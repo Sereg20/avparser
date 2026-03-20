@@ -217,30 +217,30 @@ process.once('SIGTERM', () => bot.stop('SIGTERM'));
 
 // --- БЛОК ЛОКАЛЬНОЙ ОТЛАДКИ ---
 
-async function runLocalDebug() {
-  let deals = [];
-  console.log('🛠 --- СТАРТ ЛОКАЛЬНОЙ ОТЛАДКИ --- 🛠');
+// async function runLocalDebug() {
+//   let deals = [];
+//   console.log('🛠 --- СТАРТ ЛОКАЛЬНОЙ ОТЛАДКИ --- 🛠');
 
-  // 1. Запускаем только сбор данных
-  const cars = await fetchCarsData();
+//   // 1. Запускаем только сбор данных
+//   const cars = await fetchCarsData();
 
-  console.log(`\n✅ Собрано объявлений: ${cars.length}`);
+//   console.log(`\n✅ Собрано объявлений: ${cars.length}`);
 
-  // Выводим первые 3 машины в консоль, чтобы проверить, правильно ли спарсились данные
-  if (cars.length > 0) {
-    console.log('👀 Пример собранных данных (первые 3):');
-    console.log(cars.slice(0, 3));
+//   // Выводим первые 3 машины в консоль, чтобы проверить, правильно ли спарсились данные
+//   if (cars.length > 0) {
+//     console.log('👀 Пример собранных данных (первые 3):');
+//     console.log(cars.slice(0, 3));
 
-    // 2. Тестируем математику анализа
-    console.log('\n🧠 --- ЗАПУСК АНАЛИЗА --- 🧠');
-    deals = await analyzeMarket(cars);
+//     // 2. Тестируем математику анализа
+//     console.log('\n🧠 --- ЗАПУСК АНАЛИЗА --- 🧠');
+//     deals = await analyzeMarket(cars);
 
-    console.log(`🔥 Найдено выгодных предложений: ${deals.length}`);
-    if (deals.length > 0) {
-      console.log(deals);
-    }
-  } else {
-    console.log('❌ Данные не собраны. Проверь селекторы!');
-  }
-}
-runLocalDebug();
+//     console.log(`🔥 Найдено выгодных предложений: ${deals.length}`);
+//     if (deals.length > 0) {
+//       console.log(deals);
+//     }
+//   } else {
+//     console.log('❌ Данные не собраны. Проверь селекторы!');
+//   }
+// }
+// runLocalDebug();
