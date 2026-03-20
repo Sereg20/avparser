@@ -73,12 +73,13 @@ async function fetchCarsData() {
   return results;
 }
 
-// 2. ЗАПРОС КОНКУРЕНТОВ (САМОЙ ДЕШЕВОЙ МАШИНЫ ЭТОЙ ЖЕ МОДЕЛИ И ПОКОЛЕНИЯ)
-async function getCheapestPriceForModel(brandRaw, modelRaw, genRaw) {
+// 2. ЗАПРОС КОНКУРЕНТОВ (БЕРЕМ ТОП-2 ДЕШЕВЫХ МАШИНЫ)
+async function getMarketPricesForModel(brandRaw, modelRaw, genRaw) {
   if (!brandRaw || !modelRaw) return null;
 
-  let url = `https://api.kufar.by/search-api/v2/search/rendered-paginated?cat=2010&cur=BYR&sort=prc.a&size=1&cbnd2=${brandRaw}&cmdl2=${modelRaw}`;
-  if (genRaw) url += `&cgen2=${genRaw}`; // Строгое соответствие поколению!
+  // 🔥 Меняем size=1 на size=2
+  let url = `https://api.kufar.by/search-api/v2/search/rendered-paginated?cat=2010&cur=BYR&sort=prc.a&size=2&cbnd2=${brandRaw}&cmdl2=${modelRaw}`;
+  if (genRaw) url += `&cgen2=${genRaw}`;
 
   try {
     const response = await fetch(url, {
@@ -91,7 +92,10 @@ async function getCheapestPriceForModel(brandRaw, modelRaw, genRaw) {
 
     const data = await response.json();
     if (data.ads && data.ads.length > 0) {
-      return data.ads[0].price_usd ? parseInt(data.ads[0].price_usd, 10) / 100 : null;
+      // Превращаем массив объектов в простой массив цен: [1500, 2000]
+      return data.ads
+        .map(ad => ad.price_usd ? parseInt(ad.price_usd, 10) / 100 : 0)
+        .filter(price => price > 0);
     }
   } catch (error) {
     console.error(`Ошибка поиска рынка:`, error.message);
@@ -108,17 +112,38 @@ async function analyzeMarket(cars) {
   for (let i = 0; i < cars.length; i += chunkSize) {
     const chunk = cars.slice(i, i + chunkSize);
     const promises = chunk.map(async (car) => {
-      const cheapestMarketPrice = await getCheapestPriceForModel(car.brandRaw, car.modelRaw, car.genRaw);
-      if (!cheapestMarketPrice) return null;
+      // Получаем массив цен (максимум 2 штуки)
+      const marketPrices = await getMarketPricesForModel(car.brandRaw, car.modelRaw, car.genRaw);
+      if (!marketPrices || marketPrices.length === 0) return null;
 
-      // Если наша свежая машина стоит столько же, сколько самая дешевая на сайте, ИЛИ дешевле
-      if (car.price <= cheapestMarketPrice) {
+      const firstPrice = marketPrices[0];
+      const secondPrice = marketPrices.length > 1 ? marketPrices[1] : null;
+
+      // Наша машина должна быть первой по цене (или дешевле первой, если кэш Куфара тормозит)
+      if (car.price <= firstPrice) {
+
+        let targetMarketPrice = firstPrice;
         let discountPct = 0;
-        if (car.price < cheapestMarketPrice) {
-          discountPct = Math.round(((cheapestMarketPrice - car.price) / cheapestMarketPrice) * 100);
+
+        // Если есть вторая машина для сравнения
+        if (secondPrice) {
+          const diffFromSecond = ((secondPrice - car.price) / secondPrice) * 100;
+
+          // 🔥 АНТИ-ХЛАМ: Если дешевле второй на 30% и более -> отбраковываем!
+          if (diffFromSecond >= 30) {
+            console.log(`🗑 Отбраковано (Битье/Фейк): ${car.title} за ${car.price}$ (Вторая цена: ${secondPrice}$)`);
+            return null;
+          }
+
+          // Если всё ок, выгода считается именно от ВТОРОЙ машины (ближайшего конкурента)
+          discountPct = Math.round(diffFromSecond);
+          targetMarketPrice = secondPrice;
+        } else if (car.price < firstPrice) {
+          // Если второй машины нет, но наша дешевле первой (редкий случай рассинхрона API)
+          discountPct = Math.round(((firstPrice - car.price) / firstPrice) * 100);
         }
 
-        return { ...car, marketPrice: cheapestMarketPrice, discountPct };
+        return { ...car, marketPrice: targetMarketPrice, discountPct };
       }
       return null;
     });
@@ -152,9 +177,10 @@ async function processAndSendDeals(ctx = null) {
       message += `⚙️ Техника: ${deal.techInfo}\n`;
 
       if (deal.discountPct > 0) {
-        message += `💰 Цена: **${deal.price}$** (Дешевле самого низа на ${deal.discountPct}%!)\n`;
+        message += `💰 Цена: **${deal.price}$** (Дешевле ближайшего конкурента на ${deal.discountPct}%!)\n`;
+        message += `📊 Ближайшая цена на сайте: ~${deal.marketPrice}$\n`;
       } else {
-        message += `💰 Цена: **${deal.price}$** (Это первая цена по Беларуси)\n`;
+        message += `💰 Цена: **${deal.price}$** (Это единственная или первая цена по Беларуси)\n`;
       }
 
       message += `🔗 [Смотреть объявление](${deal.url})\n\n`;
