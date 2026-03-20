@@ -130,7 +130,7 @@ async function analyzeMarket(cars) {
           const diffFromSecond = ((secondPrice - car.price) / secondPrice) * 100;
 
           // 🔥 АНТИ-ХЛАМ: Если дешевле второй на 30% и более -> отбраковываем!
-          if (diffFromSecond >= 30) {
+          if (diffFromSecond >= 50) {
             console.log(`🗑 Отбраковано (Битье/Фейк): ${car.title} за ${car.price}$ (Вторая цена: ${secondPrice}$)`);
             return null;
           }
