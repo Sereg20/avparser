@@ -112,38 +112,35 @@ async function analyzeMarket(cars) {
   for (let i = 0; i < cars.length; i += chunkSize) {
     const chunk = cars.slice(i, i + chunkSize);
     const promises = chunk.map(async (car) => {
-      // Получаем массив цен (максимум 2 штуки)
       const marketPrices = await getMarketPricesForModel(car.brandRaw, car.modelRaw, car.genRaw);
       if (!marketPrices || marketPrices.length === 0) return null;
 
       const firstPrice = marketPrices[0];
       const secondPrice = marketPrices.length > 1 ? marketPrices[1] : null;
 
-      // Наша машина должна быть первой по цене (или дешевле первой, если кэш Куфара тормозит)
+      // 🔥 НОВЫЙ ФИЛЬТР: Отбраковываем штучные экземпляры
+      if (!secondPrice) {
+        console.log(`🦄 Отбраковано (Эксклюзив/Нет конкурентов): ${car.title} за ${car.price}$`);
+        return null;
+      }
+
+      // Оцениваем только если наша машина — первая по цене (или дешевле первой из-за кэша)
       if (car.price <= firstPrice) {
 
-        let targetMarketPrice = firstPrice;
-        let discountPct = 0;
+        // Считаем разницу именно со ВТОРОЙ машиной
+        const diffFromSecond = ((secondPrice - car.price) / secondPrice) * 100;
 
-        // Если есть вторая машина для сравнения
-        if (secondPrice) {
-          const diffFromSecond = ((secondPrice - car.price) / secondPrice) * 100;
-
-          // 🔥 АНТИ-ХЛАМ: Если дешевле второй на 30% и более -> отбраковываем!
-          if (diffFromSecond >= 50) {
-            console.log(`🗑 Отбраковано (Битье/Фейк): ${car.title} за ${car.price}$ (Вторая цена: ${secondPrice}$)`);
-            return null;
-          }
-
-          // Если всё ок, выгода считается именно от ВТОРОЙ машины (ближайшего конкурента)
-          discountPct = Math.round(diffFromSecond);
-          targetMarketPrice = secondPrice;
-        } else if (car.price < firstPrice) {
-          // Если второй машины нет, но наша дешевле первой (редкий случай рассинхрона API)
-          discountPct = Math.round(((firstPrice - car.price) / firstPrice) * 100);
+        // 🔥 АНТИ-ХЛАМ: Разница больше 30% — это битье или фейк
+        if (diffFromSecond >= 30) {
+          console.log(`🗑 Отбраковано (Битье/Фейк): ${car.title} за ${car.price}$ (Вторая цена: ${secondPrice}$)`);
+          return null;
         }
 
-        return { ...car, marketPrice: targetMarketPrice, discountPct };
+        return {
+          ...car,
+          marketPrice: secondPrice,
+          discountPct: Math.round(diffFromSecond)
+        };
       }
       return null;
     });
@@ -176,12 +173,8 @@ async function processAndSendDeals(ctx = null) {
       message += `🚗 **${deal.title}** (${deal.year} г., ${deal.mileage} км)\n`;
       message += `⚙️ Техника: ${deal.techInfo}\n`;
 
-      if (deal.discountPct > 0) {
-        message += `💰 Цена: **${deal.price}$** (Дешевле ближайшего конкурента на ${deal.discountPct}%!)\n`;
-        message += `📊 Ближайшая цена на сайте: ~${deal.marketPrice}$\n`;
-      } else {
-        message += `💰 Цена: **${deal.price}$** (Это единственная или первая цена по Беларуси)\n`;
-      }
+      message += `💰 Цена: **${deal.price}$** (Дешевле конкурента на ${deal.discountPct}%!)\n`;
+      message += `📊 Ближайшая цена на сайте: ~${deal.marketPrice}$\n`;
 
       message += `🔗 [Смотреть объявление](${deal.url})\n\n`;
     });
