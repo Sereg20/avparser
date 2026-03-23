@@ -284,6 +284,33 @@ bot.command('check', async (ctx) => {
   await processAndSendDeals(ctx); // Передаем ctx, чтобы бот ответил лично
 });
 
+// Секретная команда для админа
+bot.command('users', async (ctx) => {
+  // Вставь сюда СВОЙ chat_id, чтобы никто другой не мог скачать базу
+  const ADMIN_ID = process.env.ADMIN_ID;
+  
+  if (ctx.chat.id !== ADMIN_ID) {
+    return; // Если пишет кто-то другой, бот просто промолчит
+  }
+
+  try {
+    const users = await getUsers();
+
+    // Формируем красивое сообщение
+    let text = `📊 **Статистика базы данных:**\n`;
+    text += `Всего подписчиков: ${users.length}\n\n`;
+
+    // Отправляем текст
+    await ctx.replyWithMarkdown(text);
+
+    // Отправляем сам файл users.json прямо в чат!
+    await ctx.replyWithDocument({ source: DB_FILE });
+
+  } catch (error) {
+    ctx.reply('❌ Ошибка при чтении файла пользователей.');
+  }
+});
+
 bot.launch().then(() => {
   console.log('🤖 Бот успешно запущен!');
 
