@@ -1,11 +1,29 @@
 import 'dotenv/config'; // Загружаем переменные из .env для локального тестирования
 import { Telegraf } from 'telegraf';
 import crypto from 'crypto';
+import fs from 'fs/promises';
 
+
+const DB_FILE = 'users.json'; // Имя файла нашей "базы данных"
 const BOT_TOKEN = process.env.BOT_TOKEN;
-const CHAT_ID = process.env.CHAT_ID;
 
 const bot = new Telegraf(BOT_TOKEN);
+
+// Читаем список пользователей из файла
+async function getUsers() {
+  try {
+    const data = await fs.readFile(DB_FILE, 'utf-8');
+    return JSON.parse(data);
+  } catch (error) {
+    // Если файла еще нет (при первом запуске), возвращаем пустой массив
+    return [];
+  }
+}
+
+// Записываем обновленный список пользователей в файл
+async function saveUsers(users) {
+  await fs.writeFile(DB_FILE, JSON.stringify(users, null, 2));
+}
 
 // Вспомогательная функция (по умолчанию тянет красивый 'vl', но можно попросить сырой 'v')
 function getAdParam(parameters, paramName, key = 'vl') {
@@ -160,6 +178,15 @@ async function analyzeMarket(cars) {
   return profitableDeals;
 }
 
+// Форматирует один объект автомобиля в красивое текстовое сообщение
+function getDealMessageContent(deal) {
+  return `🚗 **${deal.title}** (${deal.year} г., ${deal.mileage} км)
+⚙️ Техника: ${deal.techInfo}
+💰 Цена: **${deal.price}$** (Дешевле конкурента на ${deal.discountPct}%!)
+📊 Ближайшая цена на сайте: ~${deal.marketPrice}$
+🔗 [Смотреть объявление](${deal.url})\n\n`;
+}
+
 // 4. ГЛАВНАЯ ФУНКЦИЯ (СБОР -> АНАЛИЗ -> ТЕЛЕГРАМ)
 async function processAndSendDeals(ctx = null) {
   const carsData = await fetchCarsData();
@@ -170,21 +197,45 @@ async function processAndSendDeals(ctx = null) {
   if (bestDeals.length > 0) {
     let message = `🔥 **ТОП рынка: Найдены самые дешевые авто!**\n\n`;
     bestDeals.forEach(deal => {
-      message += `🚗 **${deal.title}** (${deal.year} г., ${deal.mileage} км)\n`;
-      message += `⚙️ Техника: ${deal.techInfo}\n`;
-
-      message += `💰 Цена: **${deal.price}$** (Дешевле конкурента на ${deal.discountPct}%!)\n`;
-      message += `📊 Ближайшая цена на сайте: ~${deal.marketPrice}$\n`;
-
-      message += `🔗 [Смотреть объявление](${deal.url})\n\n`;
+      message += getDealMessageContent(deal);
     });
 
-    try {
-      if (ctx) await ctx.replyWithMarkdown(message, { disable_web_page_preview: true });
-      else if (CHAT_ID) await bot.telegram.sendMessage(CHAT_ID, message, { parse_mode: 'Markdown', disable_web_page_preview: true });
-      console.log(`✅ Отправлено выгодных предложений: ${bestDeals.length}`);
-    } catch (error) {
-      console.error('❌ Ошибка Telegram:', error.description);
+    // Если команду вызвали вручную (/check)
+    if (ctx) {
+      await ctx.replyWithMarkdown(message, { disable_web_page_preview: true });
+    }
+    // Если это фоновый запуск по крону (Рассылка всем)
+    else {
+      const users = await getUsers();
+      if (users.length === 0) {
+        console.log('🤷‍♂️ Рассылка отменена: в базе нет ни одного подписчика.');
+        return;
+      }
+
+      console.log(`📨 Начинаем рассылку для ${users.length} пользователей...`);
+
+      // ТЕПЕРЬ МЫ ПЕРЕБИРАЕМ ОБЪЕКТЫ USERS
+      for (const user of users) {
+        const chatId = user.id; // Достаем ID из объекта
+
+        // В будущем здесь можно будет делать проверку:
+        // if (user.region && car.region !== user.region) continue;
+
+        try {
+          await bot.telegram.sendMessage(chatId, message, { parse_mode: 'Markdown', disable_web_page_preview: true });
+        } catch (error) {
+          console.error(`❌ Ошибка отправки пользователю ${chatId}:`, error.description);
+
+          if (error.description && error.description.includes('bot was blocked by the user')) {
+            console.log(`🗑 Удаляем пользователя ${chatId} из базы (он заблокировал бота).`);
+            // Удаляем по ID
+            const updatedUsers = await getUsers();
+            const filteredUsers = updatedUsers.filter(u => u.id !== chatId);
+            await saveUsers(filteredUsers);
+          }
+        }
+      }
+      console.log('✅ Рассылка завершена.');
     }
   } else {
     if (ctx) ctx.reply('🤷‍♂️ Свежих машин по низу рынка сейчас нет.');
@@ -193,16 +244,59 @@ async function processAndSendDeals(ctx = null) {
 }
 
 // --- УПРАВЛЕНИЕ БОТОМ ---
-bot.start((ctx) => ctx.reply(`Твой ID: \`${ctx.chat.id}\``));
+bot.start(async (ctx) => {
+  const chatId = ctx.chat.id;
+  let users = await getUsers();
+
+  // Проверяем, есть ли уже этот пользователь в базе (ищем объект с таким id)
+  const existingUser = users.find(u => u.id === chatId);
+
+  if (!existingUser) {
+    // Добавляем ПОЛНОЦЕННЫЙ ОБЪЕКТ
+    users.push({
+      id: chatId,
+      region: null, // Пока регион не задан
+      price: 20     // Дефолтная цена для юзера
+    });
+
+    await saveUsers(users);
+    ctx.reply('👋 Привет! Ты успешно подписался на ежечасную рассылку выгодных авто.\n\nКоманды:\n/check — проверить рынок прямо сейчас\n/stop — отписаться от рассылки');
+    console.log(`🎉 Новый подписчик: ${chatId}. Всего: ${users.length}`);
+  } else {
+    ctx.reply('✅ Ты уже подписан на рассылку!');
+  }
+});
+
+bot.command('stop', async (ctx) => {
+  const chatId = ctx.chat.id;
+  let users = await getUsers();
+
+  const existingUser = users.find(u => u.id === chatId);
+
+  if (existingUser) {
+    // Оставляем в массиве всех, кроме текущего пользователя
+    users = users.filter(u => u.id !== chatId);
+    await saveUsers(users);
+    ctx.reply('❌ Ты отписался от рассылки. Жаль, что уходишь!\n\nЕсли захочешь вернуться, просто нажми /start');
+    console.log(`📉 Пользователь ${chatId} отписался. Осталось: ${users.length}`);
+  } else {
+    ctx.reply('🤷‍♂️ Ты и так не был подписан.');
+  }
+});
+
 bot.command('check', async (ctx) => {
   await ctx.reply('⏳ Сканирую свежие объявления и сравниваю с низом рынка...');
-  await processAndSendDeals(ctx);
+  await processAndSendDeals(ctx); // Передаем ctx, чтобы бот ответил лично
 });
 
 bot.launch().then(() => {
-  console.log('🤖 Бот успешно запущен (Локальный режим с .env)');
-  // Для запуска по крону раскомментируй импорт node-cron и блок ниже:
-  // cron.schedule('0 * * * *', processAndSendDeals);
+  console.log('🤖 Бот успешно запущен!');
+
+  // Фоновый процесс рассылки запускается каждый час
+  // cron.schedule('0 * * * *', () => {
+  //     console.log('⏰ Сработал таймер расписания!');
+  //     processAndSendDeals(); 
+  // });
 });
 
 process.once('SIGINT', () => bot.stop('SIGINT'));
