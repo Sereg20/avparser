@@ -178,15 +178,6 @@ async function analyzeMarket(cars) {
   return profitableDeals;
 }
 
-// Форматирует один объект автомобиля в красивое текстовое сообщение
-function getDealMessageContent(deal) {
-  return `🚗 **${deal.title}** (${deal.year} г., ${deal.mileage} км)
-⚙️ Техника: ${deal.techInfo}
-💰 Цена: **${deal.price}$** (Дешевле конкурента на ${deal.discountPct}%!)
-📊 Ближайшая цена на сайте: ~${deal.marketPrice}$
-🔗 [Смотреть объявление](${deal.url})\n\n`;
-}
-
 // 4. ГЛАВНАЯ ФУНКЦИЯ (СБОР -> АНАЛИЗ -> ТЕЛЕГРАМ)
 async function processAndSendDeals(ctx = null) {
   const carsData = await fetchCarsData();
@@ -197,7 +188,11 @@ async function processAndSendDeals(ctx = null) {
   if (bestDeals.length > 0) {
     let message = `🔥 **ТОП рынка: Найдены самые дешевые авто!**\n\n`;
     bestDeals.forEach(deal => {
-      message += getDealMessageContent(deal);
+      message += `🚗 **${deal.title}** (${deal.year} г., ${deal.mileage} км)\n`;
+      message += `⚙️ Техника: ${deal.techInfo}\n`;
+      message += `💰 Цена: **${deal.price}$** (Дешевле конкурента на ${deal.discountPct}%!)\n`;
+      message += `📊 Ближайшая цена на сайте: ~${deal.marketPrice}$\n`;
+      message += `🔗 [Смотреть объявление](${deal.url})\n\n`;
     });
 
     // Если команду вызвали вручную (/check)
