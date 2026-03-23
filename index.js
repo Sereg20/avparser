@@ -6,6 +6,7 @@ import fs from 'fs/promises';
 
 const DB_FILE = 'users.json'; // Имя файла нашей "базы данных"
 const BOT_TOKEN = process.env.BOT_TOKEN;
+const ADMIN_ID = process.env.ADMIN_ID;
 
 const bot = new Telegraf(BOT_TOKEN);
 
@@ -286,10 +287,7 @@ bot.command('check', async (ctx) => {
 
 // Секретная команда для админа
 bot.command('users', async (ctx) => {
-  // Вставь сюда СВОЙ chat_id, чтобы никто другой не мог скачать базу
-  const ADMIN_ID = process.env.ADMIN_ID;
-  
-  if (ctx.chat.id !== ADMIN_ID) {
+  if (`${ctx.chat.id}` !== `${ADMIN_ID}`) {
     return; // Если пишет кто-то другой, бот просто промолчит
   }
 
