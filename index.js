@@ -310,6 +310,8 @@ bot.command('users', async (ctx) => {
   }
 });
 
+console.log('⏳ Пытаюсь подключиться к серверам Telegram...');
+
 bot.launch().then(() => {
   console.log('🤖 Бот успешно запущен на сервере!');
 
@@ -324,6 +326,9 @@ bot.launch().then(() => {
   });
 
   console.log('⏰ Автоматический таймер на каждый час успешно активирован.');
+}).catch((error) => {
+  // 🔥 Если Telegram нас отвергнет, мы увидим причину здесь!
+  console.error('❌ Фатальная ошибка при запуске бота:', error);
 });
 
 process.once('SIGINT', () => bot.stop('SIGINT'));
