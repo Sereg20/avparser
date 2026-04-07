@@ -4,8 +4,6 @@ import crypto from 'crypto';
 import fs from 'fs/promises';
 import cron from 'node-cron';
 
-let activeCronTask = null;
-
 
 const DB_FILE = 'users.json'; // Имя файла нашей "базы данных"
 const BOT_TOKEN = process.env.BOT_TOKEN;
@@ -312,70 +310,34 @@ bot.command('users', async (ctx) => {
   }
 });
 
-// --- ЗАПУСК БОТА С ЗАДЕРЖКОЙ (АНТИ-409 ДЛЯ RAILWAY) ---
+// 1. Создаем задачу Cron (настраиваем расписание)
+// */15 * * * * — каждые 15 минут (в 00, 15, 30, 45 минут каждого часа)
+const activeCronTask = cron.schedule('*/15 * * * *', () => {
+  console.log('⏰ Сработал 15-минутный таймер. Запускаю поиск...');
+  processAndSendDeals();
+});
 
-console.log('⏳ Ждем 5 секунд...');
+console.log('✅ Таймер инициализирован и запущен (*/15).');
 
-setTimeout(async () => {
-    // 1. Проверяем, видит ли вообще Railway наш токен (не выводим его целиком ради безопасности)
-    const token = process.env.BOT_TOKEN;
-    console.log(`🔑 Токен загружен. Длина: ${token ? token.length : 'ОШИБКА - ПУСТОЙ'}`);
+// 2. Запускаем бота для обработки команд (/start, /check)
+console.log('🔗 Подключаюсь к Telegram...');
 
-    if (!token) {
-        console.error('❌ ОШИБКА: Токен не найден! Проверь вкладку Variables в Railway.');
-        return;
-    }
+bot.launch({ dropPendingUpdates: true })
+  .then(() => {
+    console.log('🤖 Бот успешно запущен и слушает команды!');
+  })
+  .catch((err) => {
+    console.error('❌ Ошибка запуска бота (слушателя):', err.message);
+  });
 
-    console.log('📡 Делаю прямой тестовый пинг серверов Telegram...');
-
-    try {
-        // 2. Прямой запрос к Telegram API без Telegraf
-        const response = await fetch(`https://api.telegram.org/bot${token}/getMe`);
-        const data = await response.json();
-
-        console.log('✉️ Ответ от Telegram:', data);
-
-        if (!data.ok) {
-            console.error('❌ Telegram отклонил запрос (Возможно кривой токен). Остановка.');
-            return;
-        }
-
-        console.log('✅ Пинг успешен (Сеть работает!). Запускаю Telegraf...');
-        
-        // 3. Запускаем самого бота
-        bot.launch({ dropPendingUpdates: true }).then(() => {
-            console.log('🤖 Бот успешно запущен на сервере!');
-            
-            console.log('⚡ Выполняю стартовую проверку рынка...');
-            processAndSendDeals(); 
-
-            activeCronTask = cron.schedule('*/15 * * * *', () => {
-                console.log('⏰ Сработал 15-минутный таймер!');
-                processAndSendDeals();
-            });
-            console.log('⏰ Автоматический таймер успешно активирован.');
-        }).catch((error) => {
-            console.error('❌ Ошибка внутри Telegraf:', error);
-        });
-
-    } catch (networkError) {
-        // Если сеть Railway лежит или блокирует Telegram, ошибка вылезет здесь
-        console.error('🚨 ФАТАЛЬНАЯ СЕТЕВАЯ ОШИБКА: Railway не может достучаться до Telegram!');
-        console.error(networkError.message);
-    }
-
-}, 5000);
-
-// Корректная остановка при перезагрузке сервера
+// 3. Корректное завершение процесса
 process.once('SIGINT', () => {
-    console.log('🛑 Получен сигнал SIGINT. Останавливаю бота...');
-    if (activeCronTask) activeCronTask.stop();
-    bot.stop('SIGINT');
+  activeCronTask.stop();
+  bot.stop('SIGINT');
 });
 process.once('SIGTERM', () => {
-    console.log('🛑 Получен сигнал SIGTERM. Останавливаю бота...');
-    if (activeCronTask) activeCronTask.stop();
-    bot.stop('SIGTERM');
+  activeCronTask.stop();
+  bot.stop('SIGTERM');
 });
 
 // --- БЛОК ЛОКАЛЬНОЙ ОТЛАДКИ ---
