@@ -310,29 +310,44 @@ bot.command('users', async (ctx) => {
   }
 });
 
-console.log('⏳ Пытаюсь подключиться к серверам Telegram...');
+// --- ЗАПУСК БОТА С ЗАДЕРЖКОЙ (АНТИ-409 ДЛЯ RAILWAY) ---
 
-bot.launch().then(() => {
-  console.log('🤖 Бот успешно запущен на сервере!');
+console.log('⏳ Ждем 5 секунд, чтобы старый контейнер Railway успел отключиться...');
 
-  // 1. Делаем немедленный первый запуск при старте сервера (чтобы не ждать целый час)
-  console.log('⚡ Выполняю стартовую проверку рынка...');
-  processAndSendDeals();
+setTimeout(() => {
+    console.log('🔗 Пытаюсь подключиться к серверам Telegram...');
+    
+    // dropPendingUpdates: true заставляет Telegram забыть все старые клики/сообщения,
+    // которые накопились, пока бот перезагружался (чтобы бот не сошел с ума при старте)
+    bot.launch({ dropPendingUpdates: true }).then(() => {
+        console.log('🤖 Бот успешно запущен на сервере!');
+        
+        console.log('⚡ Выполняю стартовую проверку рынка...');
+        processAndSendDeals(); 
 
-  // 2. Инициализируем и запускаем ежечасный таймер
-  activeCronTask = cron.schedule('*/15 * * * *', () => {
-    console.log('⏰ [Тест] Сработал 15-минутный таймер!');
-    processAndSendDeals();
-  });
+        activeCronTask = cron.schedule('*/15 * * * *', () => {
+            console.log('⏰ Сработал 15-минутный таймер!');
+            processAndSendDeals();
+        });
 
-  console.log('⏰ Автоматический таймер на каждый час успешно активирован.');
-}).catch((error) => {
-  // 🔥 Если Telegram нас отвергнет, мы увидим причину здесь!
-  console.error('❌ Фатальная ошибка при запуске бота:', error);
+        console.log('⏰ Автоматический таймер успешно активирован.');
+    }).catch((error) => {
+        console.error('❌ Фатальная ошибка при запуске бота:', error);
+    });
+
+}, 5000); // Задержка 5000 миллисекунд (5 секунд)
+
+// Корректная остановка при перезагрузке сервера
+process.once('SIGINT', () => {
+    console.log('🛑 Получен сигнал SIGINT. Останавливаю бота...');
+    if (activeCronTask) activeCronTask.stop();
+    bot.stop('SIGINT');
 });
-
-process.once('SIGINT', () => bot.stop('SIGINT'));
-process.once('SIGTERM', () => bot.stop('SIGTERM'));
+process.once('SIGTERM', () => {
+    console.log('🛑 Получен сигнал SIGTERM. Останавливаю бота...');
+    if (activeCronTask) activeCronTask.stop();
+    bot.stop('SIGTERM');
+});
 
 // --- БЛОК ЛОКАЛЬНОЙ ОТЛАДКИ ---
 
