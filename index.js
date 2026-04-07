@@ -4,6 +4,8 @@ import crypto from 'crypto';
 import fs from 'fs/promises';
 import cron from 'node-cron';
 
+let activeCronTask = null;
+
 
 const DB_FILE = 'users.json'; // Имя файла нашей "базы данных"
 const BOT_TOKEN = process.env.BOT_TOKEN;
@@ -312,30 +314,57 @@ bot.command('users', async (ctx) => {
 
 // --- ЗАПУСК БОТА С ЗАДЕРЖКОЙ (АНТИ-409 ДЛЯ RAILWAY) ---
 
-console.log('⏳ Ждем 5 секунд, чтобы старый контейнер Railway успел отключиться...');
+console.log('⏳ Ждем 5 секунд...');
 
-setTimeout(() => {
-    console.log('🔗 Пытаюсь подключиться к серверам Telegram...');
-    
-    // dropPendingUpdates: true заставляет Telegram забыть все старые клики/сообщения,
-    // которые накопились, пока бот перезагружался (чтобы бот не сошел с ума при старте)
-    bot.launch({ dropPendingUpdates: true }).then(() => {
-        console.log('🤖 Бот успешно запущен на сервере!');
+setTimeout(async () => {
+    // 1. Проверяем, видит ли вообще Railway наш токен (не выводим его целиком ради безопасности)
+    const token = process.env.BOT_TOKEN;
+    console.log(`🔑 Токен загружен. Длина: ${token ? token.length : 'ОШИБКА - ПУСТОЙ'}`);
+
+    if (!token) {
+        console.error('❌ ОШИБКА: Токен не найден! Проверь вкладку Variables в Railway.');
+        return;
+    }
+
+    console.log('📡 Делаю прямой тестовый пинг серверов Telegram...');
+
+    try {
+        // 2. Прямой запрос к Telegram API без Telegraf
+        const response = await fetch(`https://api.telegram.org/bot${token}/getMe`);
+        const data = await response.json();
+
+        console.log('✉️ Ответ от Telegram:', data);
+
+        if (!data.ok) {
+            console.error('❌ Telegram отклонил запрос (Возможно кривой токен). Остановка.');
+            return;
+        }
+
+        console.log('✅ Пинг успешен (Сеть работает!). Запускаю Telegraf...');
         
-        console.log('⚡ Выполняю стартовую проверку рынка...');
-        processAndSendDeals(); 
+        // 3. Запускаем самого бота
+        bot.launch({ dropPendingUpdates: true }).then(() => {
+            console.log('🤖 Бот успешно запущен на сервере!');
+            
+            console.log('⚡ Выполняю стартовую проверку рынка...');
+            processAndSendDeals(); 
 
-        activeCronTask = cron.schedule('*/15 * * * *', () => {
-            console.log('⏰ Сработал 15-минутный таймер!');
-            processAndSendDeals();
+            activeCronTask = cron.schedule('*/15 * * * *', () => {
+                console.log('⏰ Сработал 15-минутный таймер!');
+                processAndSendDeals();
+            });
+            console.log('⏰ Автоматический таймер успешно активирован.');
+        }).catch((error) => {
+            console.error('❌ Ошибка внутри Telegraf:', error);
         });
 
-        console.log('⏰ Автоматический таймер успешно активирован.');
-    }).catch((error) => {
-        console.error('❌ Фатальная ошибка при запуске бота:', error);
-    });
+    } catch (networkError) {
+        // Если сеть Railway лежит или блокирует Telegram, ошибка вылезет здесь
+        console.error('🚨 ФАТАЛЬНАЯ СЕТЕВАЯ ОШИБКА: Railway не может достучаться до Telegram!');
+        console.error(networkError.message);
+    }
 
-}, 5000); // Задержка 5000 миллисекунд (5 секунд)
+}, 5000);
 
 // Корректная остановка при перезагрузке сервера
 process.once('SIGINT', () => {
