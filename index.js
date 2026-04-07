@@ -213,6 +213,10 @@ async function processAndSendDeals(ctx = null) {
 
       // ТЕПЕРЬ МЫ ПЕРЕБИРАЕМ ОБЪЕКТЫ USERS
       for (const user of users) {
+        // 🔥 Если юзер поставил рассылку на паузу — пропускаем его!
+        // Проверяем строго на false (чтобы старые юзеры без этого поля по умолчанию получали рассылку)
+        if (user.isActive === false) continue;
+        
         const chatId = user.id; // Достаем ID из объекта
 
         // В будущем здесь можно будет делать проверку:
@@ -253,7 +257,8 @@ bot.start(async (ctx) => {
     users.push({
       id: chatId,
       region: null, // Пока регион не задан
-      price: 20     // Дефолтная цена для юзера
+      price: 20,     // Дефолтная цена для юзера,
+      isActive: true //рассылка по таймеру
     });
 
     await saveUsers(users);
@@ -310,11 +315,56 @@ bot.command('users', async (ctx) => {
   }
 });
 
+// Команда для ОСТАНОВКИ персональной рассылки
+bot.command('timer_stop', async (ctx) => {
+  const chatId = ctx.chat.id;
+  let users = await getUsers();
+  const userIndex = users.findIndex(u => u.id === chatId);
+
+  if (userIndex === -1) return ctx.reply('⚠️ Сначала нажми /start');
+
+  if (users[userIndex].isActive === false) {
+    return ctx.reply('🛑 Твоя рассылка и так стоит на паузе.');
+  }
+
+  // Меняем статус на false и сохраняем
+  users[userIndex].isActive = false;
+  await saveUsers(users);
+
+  ctx.reply('💤 Твоя персональная рассылка приостановлена. Бот больше не будет тебя беспокоить. Чтобы вернуть, нажми /timer_start');
+});
+
+// Команда для ЗАПУСКА персональной рассылки
+bot.command('timer_start', async (ctx) => {
+  const chatId = ctx.chat.id;
+  let users = await getUsers();
+  const userIndex = users.findIndex(u => u.id === chatId);
+
+  if (userIndex === -1) return ctx.reply('⚠️ Сначала нажми /start');
+
+  if (users[userIndex].isActive === true) {
+    return ctx.reply('▶️ Твоя рассылка уже включена и работает!');
+  }
+
+  // Меняем статус на true и сохраняем
+  users[userIndex].isActive = true;
+  await saveUsers(users);
+
+  ctx.reply('✅ Персональная рассылка возобновлена! Жди свежие авто.');
+});
+
 // 1. Создаем задачу Cron (настраиваем расписание)
 // */15 * * * * — каждые 15 минут (в 00, 15, 30, 45 минут каждого часа)
-const activeCronTask = cron.schedule('*/15 * * * *', () => {
-  console.log('⏰ Сработал 15-минутный таймер. Запускаю поиск...');
-  processAndSendDeals();
+const activeCronTask = cron.schedule('*/15 * * * *', async () => {
+  const time = new Date().toLocaleTimeString('ru-RU');
+  console.log(`\n[${time}] ⏰ Запуск фонового поиска (*/15)...`);
+
+  try {
+    await processAndSendDeals();
+    console.log(`[${new Date().toLocaleTimeString('ru-RU')}] ✅ Поиск по расписанию успешно завершен.`);
+  } catch (error) {
+    console.error(`[${new Date().toLocaleTimeString('ru-RU')}] ❌ Ошибка при фоновом поиске:`, error);
+  }
 });
 
 console.log('✅ Таймер инициализирован и запущен (*/15).');
