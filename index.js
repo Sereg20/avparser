@@ -311,13 +311,19 @@ bot.command('users', async (ctx) => {
 });
 
 bot.launch().then(() => {
-  console.log('🤖 Бот успешно запущен!');
+  console.log('🤖 Бот успешно запущен на сервере!');
 
-  // Фоновый процесс рассылки запускается каждый час
-  cron.schedule('0 * * * *', () => {
-      console.log('⏰ Сработал таймер расписания!');
-      processAndSendDeals(); 
+  // 1. Делаем немедленный первый запуск при старте сервера (чтобы не ждать целый час)
+  console.log('⚡ Выполняю стартовую проверку рынка...');
+  processAndSendDeals();
+
+  // 2. Инициализируем и запускаем ежечасный таймер
+  activeCronTask = cron.schedule('*/15 * * * *', () => {
+    console.log('⏰ [Тест] Сработал 15-минутный таймер!');
+    processAndSendDeals();
   });
+
+  console.log('⏰ Автоматический таймер на каждый час успешно активирован.');
 });
 
 process.once('SIGINT', () => bot.stop('SIGINT'));
